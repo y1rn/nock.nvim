@@ -125,7 +125,7 @@ require("nock").setup({
 })
 ```
 
-**Prefix resolution** (ADR-0005): longest matching `prefix` wins. No match → fallback to `prefix = ""` (`files`). Deleting the prefix character inside the popup instantly returns to `files`.
+**Prefix resolution**: each non-empty `prefix` must be exactly one ASCII punctuation character (`!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~`); letters, digits, whitespace and multibyte characters are rejected. No two Modes share the same non-empty `prefix`, and at most one provider-eligible `prefix = ""` fallback exists (`files`). No match → fallback to `prefix = ""` (`files`). Deleting the prefix character inside the popup instantly returns to `files`. Violations fail fast in `setup()` / `register_mode()` with `error()`.
 
 ---
 
@@ -230,10 +230,10 @@ nock has two usage patterns. Pick the right one:
 | Examples | `files`, `:lines`, LSP `document/workspace_symbols`, `diagnostics`, `commands` | `textDocument/definition` (`gd`), `implementation` (`gi`), `references` (`gr`), `typeDefinition`, `code_action` — plus any plugin that calls `vim.ui.select` |
 | Source | `provider(query, ctx, cb) -> Item[]` — generated dynamically per `query` | `items: any[]` already computed: `utils.lsp_locations_to_items(res, …)` or any `string|table` list passed to `vim.ui.select` |
 | How to open | `prefix` (e.g. `@`/`#`/`>`) + `keymap` + `nock.open("mode")`; Input shows `prefix + query` | `vim.ui.select(items, opts, on_choice)` — hijacked to `nock.pick`; or direct `nock.pick(items, opts, on_choice)`; **no prefix**, Input starts empty, typing only filters the same `items` |
-| Occupies `prefix` table | Yes — global `ADR-0005` longest-prefix wins | **No** |
+| Occupies `prefix` table | Yes — single ASCII punctuation, global prefix resolution | **No** |
 | What Input shows | `>foo` / `@MyClass` — prefix participates in `filter.resolve` | Empty + `opts.prompt` as placeholder; when `N>1` the list shows all `N` immediately |
 
-> **Why `gd`/`gi` do not fit Way 1:** Using `setup({ modes = { lsp_definitions = { prefix="gd", provider=function() return cache end }}})` + `nock.open("lsp_definitions")` requires a global `prefix="gd"`, a mutable `defs_cache`, and a fake-persistent `provider` — the whole `Input→resolve→provider→matcher` chain runs for a one-shot result. Way 2 just calls `pick`/`vim.ui.select` with no `prefix` and no `cache`.
+> **Why `gd`/`gi` do not fit Way 1:** Using `setup({ modes = { lsp_definitions = { prefix="gd", provider=function() return cache end }}})` + `nock.open("lsp_definitions")` requires a global `prefix="gd"`, a mutable `defs_cache`, and a fake-persistent `provider` — the whole `Input→resolve→provider→matcher` chain runs for a one-shot result. Way 2 just calls `pick`/`vim.ui.select` with no `prefix` and no `cache`. Note: `prefix="gd"` is also invalid (multi-char + letters rejected with `error()`).
 
 `setup()` hijacks `vim.ui.select` by default (`hijack_ui_select = true`). Opt out with `setup({ hijack_ui_select = false })` and restore via `require("nock").restore_ui_select()`. Original is saved as `nock._orig_ui_select`.
 
@@ -356,8 +356,8 @@ require("nock").setup({
 })
 ```
 
-- `modes[name].prefix` must be explicit `""` to be fallback-eligible and needs `provider` function.
-- `register_mode(name, spec)` hot-plugs / overwrites at runtime (deep-merged); also wires `keymap` and `_lsp_target` hijacks.
+- `modes[name].prefix` must be `""` (exactly one provider-eligible fallback) or a single ASCII punctuation character; letters/digits/whitespace/multibyte, multi-char strings, duplicate non-empty prefixes, and duplicate fallbacks all `error()` in `setup()` / `register_mode()`. Provider-less `""` modes don't count toward the single-fallback limit.
+- `register_mode(name, spec)` hot-plugs / overwrites at runtime (deep-merged); also wires `keymap` and `_lsp_target` hijacks. Overwriting a Mode keeps its old `prefix` unless `spec.prefix` is given; the merged result is re-validated including collisions. To move the fallback, free `""` first (e.g. `setup({ modes = { files = { prefix = ";" }, custom = { prefix = "" } } })`).
 
 ---
 

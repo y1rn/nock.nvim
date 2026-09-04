@@ -161,15 +161,13 @@ describe("nock prefix resolution (08)", function()
   end)
 
   it("resolve_mode_and_query fallback uses prefix='' mode not hardcoded 'files'", function()
-    -- Register a custom mode with prefix="" to be the default
+    -- Single-fallback rule (ADR-0027): remove files first, then register custom fallback
+    config.options.modes.files = nil
     nock.register_mode("custom_default", {
       prefix = "",
       provider = function(_) return { { label = "custom", value = "custom" } } end,
       show_on_open = true,
     })
-    -- Remove files mode to force fallback to custom_default
-    config.options.modes.files = nil
-
     nock.open("custom_default")
     assert.is_true(shell.is_open())
     -- Typing bare text (no known prefix) should resolve to custom_default

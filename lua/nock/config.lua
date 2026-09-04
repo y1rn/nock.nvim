@@ -145,22 +145,67 @@ end
 M.options = vim.deepcopy(M.defaults)
 M.options._recencyFn = M._normalize_recency(M.options.recency)
 
+--- Prefix must be "" (fallback) or a single ASCII punctuation byte (Q1 A, Q3 A, Q4 A).
+--- Rejects alnum, whitespace, and multibyte: #prefix==1 byte + byte in 33-47/58-64/91-96/123-126.
+---@param name string
+---@param prefix any
+local function assert_valid_prefix(name, prefix)
+  if type(prefix) ~= "string" then
+    error(string.format("nock: mode '%s' prefix must be string, got %s", name, type(prefix)))
+  end
+  if prefix == "" then return end
+  if #prefix ~= 1 then
+    error(string.format("nock: mode '%s' prefix must be \"\" or single character, got %q", name, prefix))
+  end
+  local b = prefix:byte(1)
+  local is_punct = (b >= 33 and b <= 47) or (b >= 58 and b <= 64) or (b >= 91 and b <= 96) or (b >= 123 and b <= 126)
+  if not is_punct then
+    error(string.format("nock: mode '%s' prefix must be single ASCII punctuation, got %q", name, prefix))
+  end
+end
+
+--- No two modes share a non-empty prefix; at most one provider-eligible "" fallback (Q2 A, Q6 A).
+---@param modes table
+local function assert_no_prefix_collision(modes)
+  local seen = {}
+  local fallback_name = nil
+  for name, spec in pairs(modes) do
+    local pref = spec.prefix
+    if pref == nil then pref = "" end
+    if pref ~= "" then
+      if seen[pref] then
+        error(string.format("nock: duplicate prefix %q (modes '%s' and '%s')", pref, seen[pref], name))
+      end
+      seen[pref] = name
+    elseif type(spec.provider) == "function" then
+      if fallback_name then
+        error(string.format("nock: duplicate fallback prefix \"\" (modes '%s' and '%s'); only one fallback mode allowed", fallback_name, name))
+      end
+      fallback_name = name
+    end
+  end
+end
+
+--- Validate a mode spec (Q6 C: provider strict, prefix strict single punctuation)
+ local function validate_spec(name, spec)
+   if spec.provider ~= nil and type(spec.provider) ~= "function" then
+     error(string.format("nock: mode '%s' provider must be function, got %s", name, type(spec.provider)))
+   end
+  if spec.prefix ~= nil then assert_valid_prefix(name, spec.prefix) end
+ end
+
 --- Deep-merge user opts over defaults, preserving unspecified built-ins.
 --- Uses vim.tbl_deep_extend("force", defaults, user).
 ---@param opts table|nil
 function M.setup(opts)
   opts = opts or {}
   M.options = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), opts)
-  -- normalize: ensure each mode has string prefix (nil -> "") and validate provider
+  -- normalize: ensure each mode has string prefix (nil -> "") and validate (Q1-Q6 A)
   for name, spec in pairs(M.options.modes or {}) do
     if spec.prefix == nil then spec.prefix = "" end
-    if spec.provider ~= nil and type(spec.provider) ~= "function" then
-      error(string.format("nock: mode '%s' provider must be function, got %s", name, type(spec.provider)))
-    end
-    if spec.prefix ~= nil and type(spec.prefix) ~= "string" then
-      error(string.format("nock: mode '%s' prefix must be string, got %s", name, type(spec.prefix)))
-    end
+    validate_spec(name, spec)
   end
+  assert_no_prefix_collision(M.options.modes or {})
   M.options._recencyFn = M._normalize_recency(M.options.recency)
   local ok, fp = pcall(require, "nock.providers.files")
   if ok and fp._reset_cache then fp._reset_cache() end
@@ -186,18 +231,6 @@ function M.setup(opts)
   end)
 end
 
---- Validate a mode spec (Q6 C: provider strict, prefix lax)
----@param name string
----@param spec table
-local function validate_spec(name, spec)
-  if spec.provider ~= nil and type(spec.provider) ~= "function" then
-    error(string.format("nock: mode '%s' provider must be function, got %s", name, type(spec.provider)))
-  end
-  if spec.prefix ~= nil and type(spec.prefix) ~= "string" then
-    error(string.format("nock: mode '%s' prefix must be string, got %s", name, type(spec.prefix)))
-  end
-end
-
 --- Register or overwrite a Mode at runtime (hot-plug).
 ---@param name string
 ---@param spec table
@@ -208,10 +241,15 @@ function M.register_mode(name, spec)
   local existing = M.options.modes[name] or {}
   local merged = vim.tbl_deep_extend("force", existing, spec)
   if merged.prefix == nil then merged.prefix = "" end
+  assert_valid_prefix(name, merged.prefix)
+  local probe = {}
+  for k, v in pairs(M.options.modes or {}) do probe[k] = v end
+  probe[name] = merged
+  assert_no_prefix_collision(probe)
   M.options.modes[name] = merged
 end
 
---- Resolve raw input to (mode_name, eff_query) — longest prefix wins, fallback to provider-eligible mode
+--- Resolve raw input to (mode_name, eff_query) — single-char prefix match, fallback to provider-eligible mode
 ---@param raw string|nil
 ---@return string mode_name, string eff_query
 function M.resolve(raw)

@@ -80,7 +80,7 @@ describe("nock foundation (01)", function()
     nock.setup({})
 
     nock.register_mode("buffers", {
-      prefix = "b",
+      prefix = ";",
       keymap = "<leader>tt",
       provider = function()
         return { { label = "a", value = "a" } }
@@ -88,7 +88,7 @@ describe("nock foundation (01)", function()
     })
 
     assert.is_not_nil(config.options.modes.buffers)
-    assert.are.equal("b", config.options.modes.buffers.prefix)
+    assert.are.equal(";", config.options.modes.buffers.prefix)
 
     -- open the newly registered mode
     nock.open("buffers")
@@ -98,8 +98,8 @@ describe("nock foundation (01)", function()
     assert.is_false(shell.is_open())
 
     -- duplicate overwrites
-    nock.register_mode("buffers", { prefix = "bb" })
-    assert.are.equal("bb", config.options.modes.buffers.prefix)
+    nock.register_mode("buffers", { prefix = "," })
+    assert.are.equal(",", config.options.modes.buffers.prefix)
     -- provider should still be present (deep_extend preserved)
     assert.is_not_nil(config.options.modes.buffers.provider)
   end)

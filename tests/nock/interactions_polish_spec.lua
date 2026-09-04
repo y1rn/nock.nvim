@@ -506,7 +506,7 @@ describe("nock interactions polish (04)", function()
     nock.setup({}) -- reset to defaults
     require("nock.highlights").setup(config.options.highlights)
     -- keymaps from setup.modes.*.keymap are bound to open with correct Mode (verify wiring)
-    nock.setup({ modes = { files = { keymap = "<C-p>", provider = files_provider }, commands = { keymap = "<C-S-p>", provider = commands_provider } } })
+    nock.setup({ modes = { files = { keymap = "<C-p>", provider = files_provider }, commands = { prefix = ">", keymap = "<C-S-p>", provider = commands_provider } } })
     local found_p = false
     local found_sp = false
     for _, m in ipairs(vim.api.nvim_get_keymap("n")) do
