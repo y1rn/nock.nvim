@@ -3,8 +3,8 @@
 describe("nock interactions polish (04)", function()
   local nock, config, shell
 
-  local function files_provider()
-    return {
+  local function files_provider(_, _, cb)
+    cb({
       { label = "src/foo.lua",            value = "src/foo.lua",           location = { path = "src/foo.lua", lnum = 1, col = 0 } },
       { label = "src/bar.lua",            value = "src/bar.lua",           location = { path = "src/bar.lua", lnum = 2, col = 0 } },
       { label = "README.md",              value = "README.md" },
@@ -17,14 +17,16 @@ describe("nock interactions polish (04)", function()
       { label = "tests/minimal_init.lua", value = "tests/minimal_init.lua" },
       { label = "alpha.txt",              value = "alpha.txt" },
       { label = "beta.txt",               value = "beta.txt" },
-    }
+    })
+    return nil
   end
 
-  local function commands_provider()
-    return {
+  local function commands_provider(_, _, cb)
+    cb({
       { label = ":NockToggle", value = "NockToggle", detail = "toggle" },
       { label = ":NockFind",   value = "NockFind",   detail = "find" },
-    }
+    })
+    return nil
   end
 
   before_each(function()
@@ -268,7 +270,7 @@ describe("nock interactions polish (04)", function()
       maxheight = 10,
       matcher = "auto",
       show_on_open = false,
-      modes = { files = { provider = function() return many end, show_on_open = false } },
+      modes = { files = { provider = function(_, _, cb) cb(many); return nil end, show_on_open = false } },
     })
     nock.open("files")
     pop = shell._get_popup()
@@ -307,7 +309,7 @@ describe("nock interactions polish (04)", function()
     nock.setup({
       maxheight = 5,
       matcher = "auto",
-      modes = { files = { provider = function() return many end } },
+      modes = { files = { provider = function(_, _, cb) cb(many); return nil end } },
     })
     nock.open("files")
     local pop = shell._get_popup()
@@ -428,11 +430,12 @@ describe("nock interactions polish (04)", function()
       matcher = "auto",
       modes = {
         files = {
-          provider = function()
-            return {
+          provider = function(_, _, cb)
+            cb({
               { label = "one.txt", value = f1, location = { path = f1, lnum = 2, col = 0 } },
               { label = "two.txt", value = f2, location = { path = f2, lnum = 3, col = 0 } },
-            }
+            })
+            return nil
           end,
           action = function(item) committed = item.label end,
           preview = true,

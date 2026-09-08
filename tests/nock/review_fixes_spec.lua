@@ -58,7 +58,14 @@ describe("nock review fixes", function()
     config.options.modes.files.ignore = nil
     config.options.files.fd_cmd = false
     config.options.modes.files.fd_cmd = false
-    local items = files.provider(".")
+    local items
+    local done = false
+    files.provider(".", {}, function(got)
+      items = got or {}
+      done = true
+    end)
+    vim.wait(5000, function() return done end)
+    assert.is_true(done, "files provider should deliver async results")
     vim.cmd("cd " .. vim.fn.fnameescape(cwd))
     local labels = {}
     for _, it in ipairs(items) do labels[it.label] = true end

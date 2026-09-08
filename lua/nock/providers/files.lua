@@ -5,10 +5,17 @@ local _cached_gitignore = nil
 local _debounce_timer = nil
 local _pending_cwds = {}
 
--- FS adapter seam (Q10 A): injectable for tests, default delegates to vim natives
+-- FS adapter seam: injectable for tests, default delegates to vim natives.
+-- Async-only (Q6): enumeration runs off the main loop via system_async (vim.system).
 local _fs = nil
 local function get_fs()
-  if _fs then return _fs end
+  if _fs then
+    -- Backfill system_async for adapters injected before the async cutover.
+    if _fs.system_async == nil and vim.system ~= nil then
+      _fs.system_async = function(args, opts, on_exit) return vim.system(args, opts, on_exit) end
+    end
+    return _fs
+  end
   return {
     executable = function(cmd) return vim.fn.executable(cmd) end,
     systemlist = function(args) return vim.fn.systemlist(args) end,
@@ -19,6 +26,7 @@ local function get_fs()
     filereadable = function(p) return vim.fn.filereadable(p) end,
     readfile = function(p) return vim.fn.readfile(p) end,
     getftime = function(p) return vim.fn.getftime(p) end,
+    system_async = function(args, opts, on_exit) return vim.system(args, opts, on_exit) end,
   }
 end
 local function get_gitignore_enabled()
@@ -215,13 +223,9 @@ local function get_open_buffers()
   return items
 end
 
-local function get_project_files()
-  local ignore = get_ignore()
-  local fd_cmd = get_fd_cmd()
-  local cwd = vim.fn.getcwd()
+local function make_builder(ignore)
   local items = {}
   local seen = {}
-
   local function add_path(path, bufnr)
     if not path or path == "" then return end
     if is_ignored_path(path, ignore) then return end
@@ -235,60 +239,122 @@ local function get_project_files()
       location = { path = path, lnum = 1, col = 0 },
     })
   end
-
-  -- Include open buffers first in project files list
-  for _, it in ipairs(get_open_buffers()) do
-    add_path(it.value, it.bufnr)
-  end
-
-  if fd_cmd then
-    local fs = get_fs()
-    local fd_args = { fd_cmd, "--type", "f", "--strip-cwd-prefix" }
-    for _, pat in ipairs(ignore) do
-      table.insert(fd_args, "--exclude")
-      table.insert(fd_args, pat)
-    end
-    local ok, result = pcall(fs.systemlist, fd_args)
-    if ok and fs.shell_error() == 0 and type(result) == "table" and #result > 0 then
-      for _, p in ipairs(result) do
-        add_path(p)
-      end
-      if #items > 0 then
-        return items
-      end
-    end
-  end
-
-  local fs = get_fs()
-  ---@diagnostic disable-next-line: unused-local
-  local ok, files = pcall(fs.fs_find, function(name, _path)
-    for _, pat in ipairs(ignore) do
-      if name == pat then return false end
-    end
-    return true
-  end, { path = cwd, type = "file", limit = math.huge })
-  if ok and type(files) == "table" then
-    for _, f in ipairs(files) do
-      local rel = f
-      if f:sub(1, #cwd) == cwd then
-        rel = f:sub(#cwd + 2)
-      end
-      add_path(rel)
-    end
-  else
-    local globbed = fs.glob(cwd .. "/**/*")
-    for _, f in ipairs(globbed) do
-      if fs.isdirectory(f) == 0 then
-        local rel = f
-        if f:sub(1, #cwd) == cwd then rel = f:sub(#cwd+2) end
-        add_path(rel)
-      end
-    end
-  end
-  return items
+  return items, add_path
 end
 
-function M.provider(query)
+local function split_lines(s)
+  local out = {}
+  if type(s) ~= "string" or s == "" then return out end
+  for line in (s .. "\n"):gmatch("([^\n]*)\n") do
+    if line ~= "" then table.insert(out, line) end
+  end
+  return out
+end
+
+local function to_rel(p, cwd)
+  if p:sub(1, 2) == "./" then p = p:sub(3) end
+  if p:sub(1, #cwd + 1) == cwd .. "/" then p = p:sub(#cwd + 2) end
+  return p
+end
+
+local function enumerate_fallback_async(cwd, ignore, buffers, ctx, callback)
+  local fs = get_fs()
+  local cancelled = function()
+    return ctx and ctx.is_cancelled and ctx.is_cancelled()
+  end
+  local cmd = nil
+  if fs.executable("rg") == 1 then
+    cmd = { "rg", "--files" }
+  else
+    cmd = { "find", ".", "-type", "f" }
+  end
+  local job = fs.system_async(cmd, { cwd = cwd, text = true }, function(obj)
+    vim.schedule(function()
+      if cancelled() then return end
+      if vim.fn.getcwd() ~= cwd then return end
+      local items, add_path = make_builder(ignore)
+      for _, b in ipairs(buffers) do add_path(b.value, b.bufnr) end
+      for _, p in ipairs(split_lines(obj and obj.stdout or "")) do add_path(to_rel(p, cwd)) end
+      if #items == 0 then
+        for _, b in ipairs(buffers) do table.insert(items, b) end
+      else
+        _snap_by_cwd[cwd] = items
+      end
+      callback(items)
+    end)
+  end)
+  return function()
+    pcall(function() if job and job.kill then job:kill("TERM") end end)
+  end
+end
+
+local function enumerate_async(cwd, ignore, fd_cmd, buffers, ctx, callback)
+  local fs = get_fs()
+  local cancelled = function()
+    return ctx and ctx.is_cancelled and ctx.is_cancelled()
+  end
+  local function finish_with_paths(paths)
+    local items, add_path = make_builder(ignore)
+    for _, b in ipairs(buffers) do add_path(b.value, b.bufnr) end
+    for _, p in ipairs(paths) do add_path(to_rel(p, cwd)) end
+    if #items > 0 then _snap_by_cwd[cwd] = items end
+    if cancelled() then return end
+    if vim.fn.getcwd() ~= cwd then return end
+    callback(items)
+  end
+  if fs.system_async then
+    if fd_cmd then
+      local fd_args = { fd_cmd, "--type", "f", "--strip-cwd-prefix" }
+      for _, pat in ipairs(ignore) do
+        table.insert(fd_args, "--exclude")
+        table.insert(fd_args, pat)
+      end
+      local job = nil
+      job = fs.system_async(fd_args, { cwd = cwd, text = true }, function(obj)
+        vim.schedule(function()
+          if cancelled() then return end
+          local code = obj and obj.code or 1
+          local paths = split_lines(obj and obj.stdout or "")
+          if code == 0 and #paths > 0 then
+            finish_with_paths(paths)
+            return
+          end
+          enumerate_fallback_async(cwd, ignore, buffers, ctx, callback)
+        end)
+      end)
+      return function()
+        pcall(function() if job and job.kill then job:kill("TERM") end end)
+      end
+    end
+    return enumerate_fallback_async(cwd, ignore, buffers, ctx, callback)
+  end
+  vim.schedule(function()
+    if cancelled() then return end
+    local items, add_path = make_builder(ignore)
+    for _, b in ipairs(buffers) do add_path(b.value, b.bufnr) end
+    local ok, found = pcall(fs.fs_find, function(name, _path)
+      for _, pat in ipairs(ignore) do if name == pat then return false end end
+      return true
+    end, { path = cwd, type = "file", limit = math.huge })
+    if ok and type(found) == "table" then
+      for _, f in ipairs(found) do add_path(to_rel(f, cwd)) end
+    else
+      local globbed = fs.glob(cwd .. "/**/*")
+      for _, f in ipairs(globbed or {}) do
+        if fs.isdirectory(f) == 0 then add_path(to_rel(f, cwd)) end
+      end
+    end
+    if #items > 0 then _snap_by_cwd[cwd] = items end
+    if cancelled() then return end
+    if vim.fn.getcwd() ~= cwd then return end
+    callback(items)
+  end)
+  return function() end
+end
+
+function M.provider(query, ctx, callback)
+  if type(callback) ~= "function" then return nil end
+  ctx = ctx or {}
   local cfg = require("nock.config")
   local show_all = false
   local mode_spec = cfg.options.modes and cfg.options.modes.files or {}
@@ -297,21 +363,59 @@ function M.provider(query)
   else
     show_all = cfg.options.files.show or false
   end
+  local cwd = vim.fn.getcwd()
+  local cancelled = function()
+    return ctx and ctx.is_cancelled and ctx.is_cancelled()
+  end
   if query == nil or query == "" then
-    if show_all then
-      -- show: buffers prioritized + deduped full set, otherwise keep fd, no cache (Q7)
-      return get_project_files()
-    else
-      return get_open_buffers()
+    if not show_all then
+      local bufs = get_open_buffers()
+      vim.schedule(function()
+        if cancelled() then return end
+        callback(bufs)
+      end)
+      return nil, function() end
     end
+    -- Snapshot hit: deliver immediately as final, no enumeration, no loading.
+    -- Freshness comes from autocmd invalidation (BufWritePost/BufNewFile/
+    -- BufDelete/BufAdd/DirChanged); reopen with no changes is instant.
+    local snap = _snap_by_cwd[cwd]
+    if snap then
+      vim.schedule(function()
+        if cancelled() then return end
+        if vim.fn.getcwd() ~= cwd then return end
+        callback(snap)
+      end)
+      return nil, function() end
+    end
+    local bufs = get_open_buffers()
+    vim.schedule(function()
+      if cancelled() then return end
+      if vim.fn.getcwd() ~= cwd then return end
+      -- Non-final: full enumeration still in flight; filter keeps pending
+      -- so the Loading Indicator grace timer survives the slow load.
+      callback(bufs, { more = true })
+    end)
+    local ignore = get_ignore()
+    local fd_cmd = get_fd_cmd()
+    return nil, enumerate_async(cwd, ignore, fd_cmd, bufs, ctx, callback)
   else
-    local cwd = vim.fn.getcwd()
-    if not _snap_by_cwd[cwd] then
-      _snap_by_cwd[cwd] = get_project_files()
+    local snap = _snap_by_cwd[cwd]
+    if snap then
+      vim.schedule(function()
+        if cancelled() then return end
+        if vim.fn.getcwd() ~= cwd then return end
+        callback(snap)
+      end)
+      return nil, function() end
     end
-    return _snap_by_cwd[cwd]
+    local ignore = get_ignore()
+    local fd_cmd = get_fd_cmd()
+    local bufs = get_open_buffers()
+    return nil, enumerate_async(cwd, ignore, fd_cmd, bufs, ctx, callback)
   end
 end
+
 
 function M.action(item, ctx)
   if not item then

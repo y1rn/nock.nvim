@@ -39,7 +39,7 @@ describe("nock separator, initial items and completion isolation", function()
     nock.setup({
       modes = {
         files = {
-          provider = function() return items end,
+          provider = function(_, _, cb) cb(items); return nil end,
           preview = true,
           show_on_open = true,
         },
@@ -140,7 +140,10 @@ describe("nock separator, initial items and completion isolation", function()
     vim.api.nvim_buf_set_name(b1, cwd .. "/lua/nock/shell.lua")
     vim.bo[b1].buflisted = true
 
-    local items = files.provider()
+    local items
+    local done = false
+    files.provider("", {}, function(r) items = r; done = true end)
+    vim.wait(2000, function() return done end)
     assert.is_not_nil(items)
     assert.is_true(#items > 0)
     -- First item should be lua/nock/shell.lua due to open buffer MRU priority
@@ -153,7 +156,7 @@ describe("nock separator, initial items and completion isolation", function()
     nock.setup({
       modes = {
         files = {
-          provider = function() return { { label = "foo.txt" } } end,
+          provider = function(_, _, cb) cb({ { label = "foo.txt" } }); return nil end,
         },
       },
     })
@@ -184,7 +187,7 @@ describe("nock separator, initial items and completion isolation", function()
       },
       modes = {
         files = {
-          provider = function() return many end,
+          provider = function(_, _, cb) cb(many); return nil end,
         },
       },
     })

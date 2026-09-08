@@ -26,13 +26,15 @@ describe("nock prefix resolution (08)", function()
     }
   end
 
-  local function files_provider(q)
+  local function files_provider(_, _, cb)
     -- empty/nil → open buffers proxy; non-empty → project files proxy
-    return files_items()
+    cb(files_items())
+    return nil
   end
 
-  local function commands_provider(_)
-    return commands_items()
+  local function commands_provider(_, _, cb)
+    cb(commands_items())
+    return nil
   end
 
   before_each(function()
@@ -113,7 +115,7 @@ describe("nock prefix resolution (08)", function()
   it("query with '#' prefix → custom '#' mode after register_mode", function()
     nock.register_mode("lsp", {
       prefix = "#",
-      provider = function(_) return lsp_items() end,
+      provider = function(_, _, cb) cb(lsp_items()); return nil end,
       show_on_open = true,
     })
     nock.open("files")
@@ -127,7 +129,7 @@ describe("nock prefix resolution (08)", function()
   it("custom '#' mode items appear after register_mode and '#' prefix", function()
     nock.register_mode("lsp", {
       prefix = "#",
-      provider = function(_) return lsp_items() end,
+      provider = function(_, _, cb) cb(lsp_items()); return nil end,
       show_on_open = true,
     })
     nock.open("files")
@@ -165,7 +167,7 @@ describe("nock prefix resolution (08)", function()
     config.options.modes.files = nil
     nock.register_mode("custom_default", {
       prefix = "",
-      provider = function(_) return { { label = "custom", value = "custom" } } end,
+      provider = function(_, _, cb) cb({ { label = "custom", value = "custom" } }); return nil end,
       show_on_open = true,
     })
     nock.open("custom_default")
@@ -190,7 +192,9 @@ describe("nock prefix resolution (08)", function()
 
     shell._set_query_for_test("init")
     assert.are.equal("files", shell._get_current_mode())
-    assert.is_true(#shell._get_filtered() > 0)
+    -- Real files provider delivers async; wait for filtered items deterministically
+    local delivered = vim.wait(2000, function() return #shell._get_filtered() > 0 end)
+    assert.is_true(delivered)
     shell.close()
   end)
 end)

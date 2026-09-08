@@ -36,9 +36,10 @@ describe("nock extensibility, actions, utils, and presets (12)", function()
       modes = {
         ctx_test = {
           prefix = "@",
-          provider = function(query, ctx)
+          provider = function(query, ctx, cb)
             captured_ctx = ctx
-            return { { label = "item_1", value = 1 } }
+            cb({ { label = "item_1", value = 1 } })
+            return nil
           end,
           show_on_open = true,
         },
@@ -103,21 +104,24 @@ describe("nock extensibility, actions, utils, and presets (12)", function()
       },
     })
 
+    -- New filter makes exactly one provider call per apply: open with
+    -- show_on_open=false issues no call (nothing to display), so only the
+    -- two explicit queries produce callbacks (old code also cold-filled on
+    -- open — pure waste, removed by the async-only cutover).
     nock.open("stale_test")
     shell._set_query_for_test("#first")
     shell._set_query_for_test("#second")
 
-    assert.are.equal(3, #callbacks)
-    assert.is_true(callbacks[1].ctx.is_cancelled()) -- from initial open
-    assert.is_true(callbacks[2].ctx.is_cancelled()) -- from #first
-    assert.is_false(callbacks[3].ctx.is_cancelled()) -- from #second
+    assert.are.equal(2, #callbacks)
+    assert.is_true(callbacks[1].ctx.is_cancelled()) -- from #first
+    assert.is_false(callbacks[2].ctx.is_cancelled()) -- from #second
 
     -- Stale callback delivers after second query was issued
-    callbacks[2].cb({ { label = "stale_result" } })
+    callbacks[1].cb({ { label = "stale_result" } })
     assert.are.equal(0, #shell._get_filtered())
 
     -- Fresh callback delivers
-    callbacks[3].cb({ { label = "second_match", filter_text = "second" } })
+    callbacks[2].cb({ { label = "second_match", filter_text = "second" } })
     assert.are.equal(1, #shell._get_filtered())
     assert.are.equal("second_match", shell._get_filtered()[1].item.label)
     nock.close()
@@ -125,14 +129,18 @@ describe("nock extensibility, actions, utils, and presets (12)", function()
 
   it("Item with filter_text matches on filter_text and formats [kind] label", function()
     nock.setup({
+      -- Pin the [Kind] fallback format: icons render nerd-font glyphs when
+      -- enabled (default), which makes this assertion font-dependent.
+      icons = { enabled = false },
       modes = {
         kind_test = {
           prefix = "%",
-          provider = function(_)
-            return {
+          provider = function(_, _, cb)
+            cb({
               { label = "render()", filter_text = "render function", kind = "Function" },
               { label = "ConfigError", filter_text = "error type", kind = "Class" },
-            }
+            })
+            return nil
           end,
           show_on_open = true,
         },
@@ -168,6 +176,8 @@ describe("nock extensibility, actions, utils, and presets (12)", function()
     nock.open("cmd_mode")
     assert.is_true(shell.is_open())
     shell._set_query_for_test(">NockPresetCmdTest")
+    -- Real preset providers deliver async (vim.schedule tick).
+    vim.wait(2000, function() return #shell._get_filtered() == 1 end)
     assert.are.equal(1, #shell._get_filtered())
 
     shell._commit()
@@ -198,8 +208,9 @@ describe("nock extensibility, actions, utils, and presets (12)", function()
 
     nock.open("diag")
     assert.is_true(shell.is_open())
+    -- Real preset providers deliver async (vim.schedule tick).
+    vim.wait(2000, function() return #shell._get_filtered() == 1 end)
     local filt = shell._get_filtered()
-    assert.are.equal(1, #filt)
 
     -- Only ERROR remains, WARN/HINT cleared
     assert.are.equal("Error", filt[1].item.kind)
@@ -225,14 +236,15 @@ describe("nock extensibility, actions, utils, and presets (12)", function()
         goto_line = presets.lines({ prefix = ":" }),
       },
     })
-
     nock.open("goto_line")
     assert.is_true(shell.is_open())
+    vim.wait(2000, function() return #shell._get_filtered() == 4 end)
     assert.are.equal(4, #shell._get_filtered())
 
     -- Filter line 3
     -- Filter lines containing 'hello' (lines 2 and 3 match)
     shell._set_query_for_test(":hello")
+    vim.wait(2000, function() return #shell._get_filtered() == 2 end)
     assert.are.equal(2, #shell._get_filtered())
 
     -- Commit jumps cursor in origin window to top selected line (line 2)

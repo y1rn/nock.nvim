@@ -48,7 +48,14 @@ describe("nock providers, actions and preview (03)", function()
 
     nock.setup({ files = { fd_cmd = false }, modes = { files = { fd_cmd = false } } })
     local files_provider = require("nock.providers.files")
-    local items = files_provider.provider(".")
+    local items
+    local done = false
+    files_provider.provider(".", {}, function(got)
+      items = got or {}
+      done = true
+    end)
+    vim.wait(5000, function() return done end)
+    assert.is_true(done, "files provider should deliver async results")
     local labels = {}
     for _, it in ipairs(items) do labels[it.label] = true end
     assert.is_true(labels["a.txt"] or labels["./a.txt"], "a.txt should be present")
@@ -64,13 +71,27 @@ describe("nock providers, actions and preview (03)", function()
     end
 
     nock.setup({ files = { fd_cmd = false, ignore = {} }, modes = { files = { fd_cmd = false, ignore = {} } } })
-    local items2 = files_provider.provider(".")
+    local items2
+    local done2 = false
+    files_provider.provider(".", {}, function(got)
+      items2 = got or {}
+      done2 = true
+    end)
+    vim.wait(5000, function() return done2 end)
+    assert.is_true(done2, "files provider should deliver async results")
     local labels2 = {}
     for _, it in ipairs(items2) do labels2[it.label] = true end
     assert.is_true(labels2[".git/inner.txt"] or labels2[".DS_Store"] or labels2["node_modules/mod.js"] or #items2 > #items, "override should allow ignored files")
 
     nock.setup({ files = { fd_cmd = false }, modes = { files = { fd_cmd = false, ignore = { "a.txt" } } } })
-    local items3 = files_provider.provider(".")
+    local items3
+    local done3 = false
+    files_provider.provider(".", {}, function(got)
+      items3 = got or {}
+      done3 = true
+    end)
+    vim.wait(5000, function() return done3 end)
+    assert.is_true(done3, "files provider should deliver async results")
     local labels3 = {}
     for _, it in ipairs(items3) do labels3[it.label] = true end
     assert.is_falsy(labels3["a.txt"], "custom mode ignore should exclude a.txt")
@@ -85,8 +106,9 @@ describe("nock providers, actions and preview (03)", function()
       modes = {
         custom_mode = {
           prefix = ":",
-          provider = function()
-            return { { label = ":CustomAction", value = "CustomAction", detail = "custom action" } }
+          provider = function(_, _, cb)
+            cb({ { label = ":CustomAction", value = "CustomAction", detail = "custom action" } })
+            return nil
           end,
           action = function(item)
             if item.value == "CustomAction" then
@@ -108,9 +130,10 @@ describe("nock providers, actions and preview (03)", function()
     nock.setup({
       modes = {
         files = {
-          provider = function()
+          provider = function(_, _, cb)
             custom_called = true
-            return custom_items
+            cb(custom_items)
+            return nil
           end,
         },
       },
@@ -140,7 +163,7 @@ describe("nock providers, actions and preview (03)", function()
       matcher = "auto",
       modes = {
         files = {
-          provider = function() return items end,
+          provider = function(_, _, cb) cb(items); return nil end,
           preview = true,
         },
       },
@@ -191,7 +214,7 @@ describe("nock providers, actions and preview (03)", function()
     nock.setup({
       modes = {
         files = {
-          provider = function() return items end,
+          provider = function(_, _, cb) cb(items); return nil end,
           preview = true,
         },
       },
@@ -243,7 +266,7 @@ describe("nock providers, actions and preview (03)", function()
     nock.setup({
       modes = {
         files = {
-          provider = function() return file_items end,
+          provider = function(_, _, cb) cb(file_items); return nil end,
           preview = false,
         },
       },
@@ -269,7 +292,7 @@ describe("nock providers, actions and preview (03)", function()
       modes = {
         commands = {
           prefix = ">",
-          provider = function() return cmd_items end,
+          provider = function(_, _, cb) cb(cmd_items); return nil end,
           preview = false,
         },
       },
@@ -286,7 +309,7 @@ describe("nock providers, actions and preview (03)", function()
     nock.setup({
       modes = {
         files = {
-          provider = function() return { { label = "custom", value = "custom", location = { path = f } } } end,
+          provider = function(_, _, cb) cb({ { label = "custom", value = "custom", location = { path = f } } }); return nil end,
           action = function(item, ctx)
             custom_item = item
             custom_ctx = ctx
@@ -321,7 +344,7 @@ describe("nock providers, actions and preview (03)", function()
     nock.setup({
       modes = {
         files = {
-          provider = function() return items end,
+          provider = function(_, _, cb) cb(items); return nil end,
           preview = true,
           action = function(item, ctx)
             table.insert(action_log, item.label)
@@ -381,7 +404,7 @@ describe("nock providers, actions and preview (03)", function()
     nock.setup({
       modes = {
         files = {
-          provider = function() return items end,
+          provider = function(_, _, cb) cb(items); return nil end,
           preview = true,
         },
       },

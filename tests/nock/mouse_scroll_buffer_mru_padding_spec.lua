@@ -50,7 +50,10 @@ describe("nock mouse scroll, buffer MRU and border padding (10)", function()
     assert.are.equal(b_prev1, vim.fn.bufnr("#"))
 
     -- When files provider is called with empty query (""), it returns open buffers in MRU order
-    local items = files_provider.provider("")
+    local items
+    local done = false
+    files_provider.provider("", {}, function(r) items = r; done = true end)
+    vim.wait(2000, function() return done end)
     assert.is_true(#items >= 3)
 
     local labels = {}
@@ -89,7 +92,7 @@ describe("nock mouse scroll, buffer MRU and border padding (10)", function()
       modes = {
         scroll_test = {
           prefix = "@",
-          provider = function(_) return mock_items end,
+          provider = function(_, _, cb) cb(mock_items); return nil end,
           action = function() end,
           show_on_open = true,
         }
@@ -149,7 +152,7 @@ describe("nock mouse scroll, buffer MRU and border padding (10)", function()
       modes = {
         wheel_test = {
           prefix = "!",
-          provider = function(_) return mock_items end,
+          provider = function(_, _, cb) cb(mock_items); return nil end,
           action = function() end,
           show_on_open = true,
         }
@@ -181,7 +184,7 @@ describe("nock mouse scroll, buffer MRU and border padding (10)", function()
       modes = {
         nav_test = {
           prefix = "?",
-          provider = function(_) return mock_items end,
+          provider = function(_, _, cb) cb(mock_items); return nil end,
           action = function() end,
           show_on_open = true,
         }

@@ -82,8 +82,9 @@ describe("nock foundation (01)", function()
     nock.register_mode("buffers", {
       prefix = ";",
       keymap = "<leader>tt",
-      provider = function()
-        return { { label = "a", value = "a" } }
+      provider = function(_, _, cb)
+        cb({ { label = "a", value = "a" } })
+        return nil
       end,
     })
 
@@ -147,7 +148,7 @@ describe("nock foundation (01)", function()
     assert.are.equal("", lines_buf[1])
 
     -- open custom mode while already open switches in-place (same single popup)
-    nock.register_mode("custom", { prefix = ">", provider = function() return {} end })
+    nock.register_mode("custom", { prefix = ">", provider = function(_, _, cb) cb({}); return nil end })
     local prev_win = winid
     local popup2 = nock.open("custom")
     assert.are.equal(prev_win, popup2.winid)
@@ -230,7 +231,7 @@ describe("nock foundation (01)", function()
     nock.setup({
       modes = {
         files = { keymap = "<C-p>" },
-        custom = { prefix = ">", keymap = "<C-S-p>", provider = function() return {} end },
+        custom = { prefix = ">", keymap = "<C-S-p>", provider = function(_, _, cb) cb({}); return nil end },
       },
     })
 
@@ -253,7 +254,7 @@ describe("nock foundation (01)", function()
     end
     assert.is_true(found_n)
     -- Custom mode keymap via register_mode also bound (all modes)
-    nock.register_mode("custom", { keymap = "<leader>tt", provider = function() return {} end })
+    nock.register_mode("custom", { keymap = "<leader>tt", provider = function(_, _, cb) cb({}); return nil end })
     local found_custom = false
     local has_tt = false
     for _, mode in ipairs({ "n", "i", "v", "x", "c", "t" }) do
@@ -307,9 +308,11 @@ describe("nock foundation (01)", function()
     -- config matcher default
     assert.are.equal("auto", config.options.matcher)
     -- modes have provider stubs returning Item[]
-    local items = config.options.modes.files.provider()
-    assert.is_not_nil(items)
-    assert.are.equal("table", type(items))
+    local got, done
+    config.options.modes.files.provider("", {}, function(items) got = items; done = true end)
+    vim.wait(2000, function() return done end)
+    assert.is_not_nil(got)
+    assert.are.equal("table", type(got))
     -- action is callable
     assert.are.equal("function", type(config.options.modes.files.action))
   end)

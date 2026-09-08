@@ -140,34 +140,33 @@ require("nock").register_mode("branches", {
   keymap = "<leader>sb",
   preview = false, -- no location jump
 
-  -- provider(query, ctx, callback?) -> Item[] | nil (async via callback)
+  -- provider(query, ctx, callback) -> nil[, cancel_fn] (async-only)
   provider = function(query, ctx, callback)
     -- ctx = { win = origin_win, buf = origin_buf, file = origin_file,
     --         is_cancelled = function() -> bool }
     -- query is the effective query (prefix stripped + trimmed)
-    -- Return sync:
-    local branches = vim.fn.systemlist("git branch --format='%(refname:short)'")
-    local items = {}
-    for _, b in ipairs(branches) do
-      table.insert(items, {
-        label = b,
-        -- filter_text = b, -- optional: search text if different from label
-        -- kind = "Branch",  -- optional: renders as "[Branch] main" or icon
-        -- detail = "branch", -- right-side dimmed text
-        -- location = { path = "file", lnum = 1, col = 0 }, -- enables preview
-        value = b,
-      })
-    end
-    return items
-
-    -- Async alternative:
-    -- vim.system({"git","branch"}, {text=true}, function(obj)
-    --   if ctx.is_cancelled() then return end
-    --   callback(items)
-    -- end)
-    -- return nil
+    -- Always callback, never return items. May return a cancel_fn killing the job.
+    local job = vim.system({ "git", "branch", "--format=%(refname:short)" }, { text = true }, function(obj)
+      vim.schedule(function()
+        if ctx.is_cancelled and ctx.is_cancelled() then return end
+        local items = {}
+        for _, b in ipairs(vim.split(obj.stdout or "", "\n")) do
+          if b ~= "" then
+            table.insert(items, {
+              label = b,
+              -- filter_text = b, -- optional: search text if different from label
+              -- kind = "Branch",  -- optional: renders as "[Branch] main" or icon
+              -- detail = "branch", -- right-side dimmed text
+              -- location = { path = "file", lnum = 1, col = 0 }, -- enables preview
+              value = b,
+            })
+          end
+        end
+        callback(items)
+      end)
+    end)
+    return nil, function() job:kill("TERM") end
   end,
-
   -- action(item, ctx) — called on <CR> / double-click
   action = function(item, ctx)
     vim.cmd("!git checkout " .. vim.fn.shellescape(item.value))
@@ -228,12 +227,12 @@ nock has two usage patterns. Pick the right one:
 |---|---|---|
 | When | **Searchable large list**: results depend on what you type, many candidates | **One-shot small list via `vim.ui.select`**: results already known, `N` is small (2–20), determined by cursor position |
 | Examples | `files`, `:lines`, LSP `document/workspace_symbols`, `diagnostics`, `commands` | `textDocument/definition` (`gd`), `implementation` (`gi`), `references` (`gr`), `typeDefinition`, `code_action` — plus any plugin that calls `vim.ui.select` |
-| Source | `provider(query, ctx, cb) -> Item[]` — generated dynamically per `query` | `items: any[]` already computed: `utils.lsp_locations_to_items(res, …)` or any `string|table` list passed to `vim.ui.select` |
+| Source | `provider(query, ctx, cb) -> nil[, cancel_fn]` — generated dynamically per `query`, delivered via `cb(items)` | `items: any[]` already computed: `utils.lsp_locations_to_items(res, …)` or any `string|table` list passed to `vim.ui.select` |
 | How to open | `prefix` (e.g. `@`/`#`/`>`) + `keymap` + `nock.open("mode")`; Input shows `prefix + query` | `vim.ui.select(items, opts, on_choice)` — hijacked to `nock.pick`; or direct `nock.pick(items, opts, on_choice)`; **no prefix**, Input starts empty, typing only filters the same `items` |
 | Occupies `prefix` table | Yes — single ASCII punctuation, global prefix resolution | **No** |
 | What Input shows | `>foo` / `@MyClass` — prefix participates in `filter.resolve` | Empty + `opts.prompt` as placeholder; when `N>1` the list shows all `N` immediately |
 
-> **Why `gd`/`gi` do not fit Way 1:** Using `setup({ modes = { lsp_definitions = { prefix="gd", provider=function() return cache end }}})` + `nock.open("lsp_definitions")` requires a global `prefix="gd"`, a mutable `defs_cache`, and a fake-persistent `provider` — the whole `Input→resolve→provider→matcher` chain runs for a one-shot result. Way 2 just calls `pick`/`vim.ui.select` with no `prefix` and no `cache`. Note: `prefix="gd"` is also invalid (multi-char + letters rejected with `error()`).
+> **Why `gd`/`gi` do not fit Way 1:** Using `setup({ modes = { lsp_definitions = { prefix="gd", provider=function(_, _, cb) cb(cache); return nil end }}})` + `nock.open("lsp_definitions")` requires a global `prefix="gd"`, a mutable `defs_cache`, and a fake-persistent `provider` — the whole `Input→resolve→provider→matcher` chain runs for a one-shot result. Way 2 just calls `pick`/`vim.ui.select` with no `prefix` and no `cache`. Note: `prefix="gd"` is also invalid (multi-char + letters rejected with `error()`).
 
 `setup()` hijacks `vim.ui.select` by default (`hijack_ui_select = true`). Opt out with `setup({ hijack_ui_select = false })` and restore via `require("nock").restore_ui_select()`. Original is saved as `nock._orig_ui_select`.
 

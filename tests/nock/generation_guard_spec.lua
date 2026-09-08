@@ -37,7 +37,7 @@ describe("nock generation guard (0020)", function()
       modes = {
         files = {
           prefix = "",
-          provider = function() return files_items end,
+          provider = function(_, _, cb) cb(files_items); return nil end,
           show_on_open = true,
         },
         doc_symbols = {
@@ -63,7 +63,7 @@ describe("nock generation guard (0020)", function()
     -- 2. switch to files with eff="" (same eff, different mode) -> new generation
     filter.apply("", { win = 1000, buf = 1, file = "" }, function() end)
     assert.are.equal("files", filter.get_current_mode())
-    assert.is_false(filter.is_pending(), "files is sync so not pending")
+    assert.is_false(filter.is_pending(), "files delivers synchronously so not pending")
     -- previous symbols callback must now be stale / cancelled
     assert.is_true(symbols_ctx.is_cancelled())
 
@@ -92,7 +92,7 @@ describe("nock generation guard (0020)", function()
     local files_items = { { label = "alpha.txt" }, { label = "beta.txt" } }
     nock.setup({
       modes = {
-        files = { prefix = "", provider = function() return files_items end, show_on_open = true },
+        files = { prefix = "", provider = function(_, _, cb) cb(files_items); return nil end, show_on_open = true },
         doc_symbols = {
           prefix = "@",
           provider = function(_q, _ctx, cb) symbols_cb = cb; return nil end,
@@ -141,7 +141,7 @@ describe("nock generation guard (0020)", function()
     -- trigger provider via filter? Instead invoke provider directly to capture ctx
     -- Use config to register doc_symbols and drive via filter
     config.reset()
-    nock.setup({ modes = { files = { prefix = "", provider = function() return { { label = "f.txt" } } end }, doc_symbols = doc_spec } })
+    nock.setup({ modes = { files = { prefix = "", provider = function(_, _, cb) cb({ { label = "f.txt" } }); return nil end }, doc_symbols = doc_spec } })
     filter.reset()
     local captured_ctx = nil
     local captured_cb = nil
@@ -212,5 +212,32 @@ describe("nock generation guard (0020)", function()
     cb_second({ { label = "fresh", filter_text = "world" } })
     assert.is_false(filter.is_pending())
     assert.are.equal("fresh", filter.get_state().filtered[1].item.label)
+  end)
+  it("non-final delivery keeps pending so slow open shows loading (0028)", function()
+    local cb = nil
+    nock.setup({
+      modes = {
+        files = {
+          prefix = "",
+          provider = function(_, _, c) cb = c; return nil end,
+          show_on_open = true,
+        },
+      },
+    })
+    local updates = 0
+    filter.apply("", { win = 1, buf = 1, file = "" }, function() updates = updates + 1 end)
+    assert.is_true(filter.is_pending())
+    assert.are.equal(1, updates)
+    -- buffers immediate, full enumeration still in flight
+    cb({ { label = "open.txt" } }, { more = true })
+    assert.is_true(filter.is_pending(), "pending survives non-final delivery")
+    assert.are.equal(1, #filter.get_state().filtered)
+    assert.are.equal("open.txt", filter.get_state().filtered[1].item.label)
+    assert.are.equal(2, updates)
+    -- slow backfill resolves: pending clears, list completes
+    cb({ { label = "open.txt" }, { label = "slow.txt" } })
+    assert.is_false(filter.is_pending())
+    assert.are.equal(2, #filter.get_state().filtered)
+    assert.are.equal(3, updates)
   end)
 end)

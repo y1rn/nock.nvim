@@ -4,25 +4,31 @@
 describe("nock matcher chain and filter (02)", function()
   local nock, config, shell, matcher
 
-  local function files_provider()
-    return {
-      { label = "src/foo.lua" },
-      { label = "src/bar.lua" },
-      { label = "README.md" },
-      { label = "doc/readme.txt" },
-      { label = "lua/nock/matcher.lua" },
-      { label = "lua/nock/shell.lua" },
-      { label = "lua/nock/config.lua" },
-    }
+  local files_items = {
+    { label = "src/foo.lua" },
+    { label = "src/bar.lua" },
+    { label = "README.md" },
+    { label = "doc/readme.txt" },
+    { label = "lua/nock/matcher.lua" },
+    { label = "lua/nock/shell.lua" },
+    { label = "lua/nock/config.lua" },
+  }
+  -- Async-only contract (ADR-0028): sync delivery inside pcall keeps the
+  -- shell-integration asserts below deterministic (no tick wait needed).
+  local function files_provider(_, _, cb)
+    cb(files_items)
+    return nil
   end
 
-  local function commands_provider()
-    return {
-      { label = "NockToggle" },
-      { label = "NockFind" },
-      { label = "NockTest" },
-      { label = "Edit" },
-    }
+  local commands_items = {
+    { label = "NockToggle" },
+    { label = "NockFind" },
+    { label = "NockTest" },
+    { label = "Edit" },
+  }
+  local function commands_provider(_, _, cb)
+    cb(commands_items)
+    return nil
   end
 
   before_each(function()
@@ -53,7 +59,7 @@ describe("nock matcher chain and filter (02)", function()
   end)
 
   it("matcher='auto' uses vim.fn.matchfuzzypos; matcher=function and matcher='vim.fn'/'native' paths work; fallback Lua fzy", function()
-    local items = files_provider()
+    local items = files_items
     -- auto should use vim.fn on 0.12.5
     local r_auto = matcher.filter("foo", items, "auto")
     assert.is_true(#r_auto >= 1)

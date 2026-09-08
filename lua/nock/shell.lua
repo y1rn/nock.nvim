@@ -590,27 +590,6 @@ end
 ---@param mode_name string|nil
 ---@param opts table|nil optional { maxheight }
 function M.open(mode_name, opts)
-  -- Snapshot Invalidation (ADR-0018 Q5 E): fresh snapshot on every files-mode open
-  do
-    local ok, fp = pcall(require, "nock.providers.files")
-    if ok and fp.invalidate then
-      local cfg_ok, cfg = pcall(require, "nock.config")
-      local is_files_mode = false
-      if mode_name == "files" then
-        is_files_mode = true
-      elseif mode_name == nil then
-        local fb = cfg_ok and cfg.resolve and cfg.resolve("") or "files"
-        if fb == "files" then is_files_mode = true end
-      else
-        local m = cfg_ok and cfg.options.modes and cfg.options.modes[mode_name] or nil
-        if m and m.prefix == "" then is_files_mode = true end
-      end
-      if is_files_mode then
-        local cwd = vim.fn.getcwd()
-        pcall(fp.invalidate, cwd)
-      end
-    end
-  end
   local config = require("nock.config")
   opts = opts or {}
   M._open_opts = opts
@@ -860,6 +839,7 @@ function M.open(mode_name, opts)
       end,
       on_detach = function()
         loading.stop()
+        pcall(function() require("nock.filter").cancel_pending() end)
         teardown_guard()
         teardown_dismiss()
         if M._timer then
@@ -889,6 +869,8 @@ function M.close(opts)
   end
   -- loading must follow nock lifecycle: stop grace/spinner and hide window immediately on close
   pcall(function() require("nock.loading").stop() end)
+  -- True kill (Q7): close kills the in-flight enumeration immediately, before teardown.
+  pcall(function() require("nock.filter").cancel_pending() end)
   teardown_guard()
   teardown_dismiss()
   if M._timer then
@@ -1057,7 +1039,15 @@ function M.pick(items, opts, on_choice)
   end
   cfg.options.modes[pick_mode] = {
     prefix = "",
-    provider = function() return coerced end,
+    provider = function(_q, ctx, cb)
+      if type(cb) ~= "function" then return nil end
+      local snapshot = coerced
+      vim.schedule(function()
+        if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+        cb(snapshot)
+      end)
+      return nil, function() end
+    end,
     action = pick_action,
     preview = use_preview and true or false,
   }
@@ -1181,7 +1171,7 @@ function M.pick(items, opts, on_choice)
         return false
       end,
       on_detach = function()
-        loading.stop(); teardown_guard(); teardown_dismiss()
+        loading.stop(); pcall(function() require("nock.filter").cancel_pending() end); teardown_guard(); teardown_dismiss()
         if M._timer then pcall(function() M._timer:stop() end); pcall(function() M._timer:close() end); M._timer=nil end
         -- if detached without commit/cancel, treat as cancel (vim.ui.select semantics Q10)
         if M._current_mode == "__pick__" and type(on_choice) == "function" then

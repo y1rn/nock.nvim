@@ -2,8 +2,8 @@ local M = {}
 
 -- Built-in Modes now use real Providers/Actions (Ticket 03).
 -- Lazy require to avoid circular dependency (providers require config at call time).
-local function files_provider(q)
-  return require("nock.providers.files").provider(q)
+local function files_provider(q, ctx, cb)
+  return require("nock.providers.files").provider(q, ctx, cb)
 end
 
 local function files_action(item, ctx)
@@ -216,8 +216,22 @@ function M.setup(opts)
       local fp2_ok, fp2 = pcall(require, "nock.providers.files")
       if not fp2_ok or not fp2._schedule_invalidate then return end
       local fname = args and (args.file or args.match) or ""
+      local ev = args and args.event or ""
       -- DirChanged carries no file; treat as cwd-level
-      if args and args.event == "DirChanged" then fname = "" end
+      if ev == "DirChanged" then fname = "" end
+      -- Lifecycle events from nameless or non-file buffers must not poison
+      -- the snapshot: nock's own popup (nofile, unlisted, bufhidden=wipe)
+      -- fires BufAdd/BufDelete/BufWipeout on every open/close, which used to
+      -- wipe the snapshot ~150ms later so EVERY reopen was a cold load.
+      -- BufWritePost (a real write happened) and DirChanged stay unconditional.
+      if ev ~= "DirChanged" and ev ~= "BufWritePost" then
+        local buftype = nil
+        local buf = args and args.buf
+        if buf and vim.api.nvim_buf_is_valid(buf) then
+          pcall(function() buftype = vim.bo[buf].buftype end)
+        end
+        if fname == "" or (buftype ~= nil and buftype ~= "") then return end
+      end
       pcall(fp2._schedule_invalidate, fname)
     end
     vim.api.nvim_create_autocmd({ "BufWritePost", "BufNewFile", "BufDelete", "BufAdd", "BufWipeout" }, {

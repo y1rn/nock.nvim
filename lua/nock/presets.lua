@@ -44,7 +44,8 @@ function M.commands(opts)
     keymap = opts.keymap ~= nil and opts.keymap or "<C-S-p>",
     show_on_open = opts.show_on_open ~= nil and opts.show_on_open or true,
     ---@diagnostic disable-next-line: unused-local
-    provider = function(_query, ctx)
+    provider = function(_query, ctx, callback)
+      if type(callback) ~= "function" then return nil end
       local items = {}
       local cmds = vim.api.nvim_get_commands({})
       local buf_cmds = (ctx and ctx.buf and vim.api.nvim_buf_is_valid(ctx.buf)) and vim.api.nvim_buf_get_commands(ctx.buf, {}) or {}
@@ -66,7 +67,11 @@ function M.commands(opts)
           kind = "Command",
         })
       end
-      return items
+      vim.schedule(function()
+        if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+        callback(items)
+      end)
+      return nil, function() end
     end,
     action = opts.action or actions.cmd,
     preview = opts.preview or false,
@@ -84,65 +89,47 @@ function M.lsp_document_symbols(opts)
     _lsp_target = "document_symbol",
     ---@diagnostic disable-next-line: unused-local
     provider = function(_query, ctx, callback)
+      if type(callback) ~= "function" then return nil end
       local lsp = get_lsp()
       local buf = (ctx and ctx.buf and vim.api.nvim_buf_is_valid(ctx.buf)) and ctx.buf or vim.api.nvim_get_current_buf()
       local clients = lsp.get_clients({ bufnr = buf })
       if #clients == 0 then
         clients = lsp.get_clients()
-        if #clients == 0 then return { { label = "No LSP client attached", filter_text = "", kind = "Info", detail = "No LSP for buffer " .. buf } } end
-      end
-      -- Async path: use callback to avoid wait timeout -> empty list
-      if callback then
-        local pending = #clients
-        local accumulated = {}
-        local function flatten_to_acc(syms)
-          for _, sym in ipairs(syms) do
-            table.insert(accumulated, utils.lsp_symbol_to_item(sym, { bufnr = buf, default_path = ctx and ctx.file }))
-            if sym.children and type(sym.children) == "table" and #sym.children > 0 then
-              flatten_to_acc(sym.children)
-            end
-          end
-        end
-        for _, client in ipairs(clients) do
-          lsp.client_request(client, "textDocument/documentSymbol", lsp.make_text_document_params(buf), function(err, result)
+        if #clients == 0 then
+          vim.schedule(function()
             if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
-            pending = pending - 1
-            if not err and result and type(result) == "table" then
-              -- result can be DocumentSymbol[] or SymbolInformation[]
-              if result[1] and result[1].name then
-                flatten_to_acc(result)
-              elseif result[1] and result[1].result then
-                -- fallback, though async direct result shouldn't have this shape
-                for _, r in pairs(result) do if r.result then flatten_to_acc(r.result) end end
-              end
-            end
-            if pending <= 0 and callback then
-              callback(accumulated)
-            end
-          end, buf)
+            callback({ { label = "No LSP client attached", filter_text = "", kind = "Info", detail = "No LSP for buffer " .. buf } })
+          end)
+          return nil, function() end
         end
-        return nil
       end
-      -- Sync fallback for direct calls without callback (tests/back-compat)
-      local timeout = opts.timeout or 1000
-      local res = lsp.buf_request_sync(buf, "textDocument/documentSymbol", lsp.make_text_document_params(buf), timeout)
-      local items = {}
-      if res then
-        local function flatten_symbols(syms)
-          for _, sym in ipairs(syms) do
-            table.insert(items, utils.lsp_symbol_to_item(sym, { bufnr = buf, default_path = ctx and ctx.file }))
-            if sym.children and type(sym.children) == "table" and #sym.children > 0 then
-              flatten_symbols(sym.children)
-            end
-          end
-        end
-        for _, client_res in pairs(res) do
-          if client_res.result and type(client_res.result) == "table" then
-            flatten_symbols(client_res.result)
+      local pending = #clients
+      local accumulated = {}
+      local function flatten_to_acc(syms)
+        for _, sym in ipairs(syms) do
+          table.insert(accumulated, utils.lsp_symbol_to_item(sym, { bufnr = buf, default_path = ctx and ctx.file }))
+          if sym.children and type(sym.children) == "table" and #sym.children > 0 then
+            flatten_to_acc(sym.children)
           end
         end
       end
-      return items
+      for _, client in ipairs(clients) do
+        lsp.client_request(client, "textDocument/documentSymbol", lsp.make_text_document_params(buf), function(err, result)
+          if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+          pending = pending - 1
+          if not err and result and type(result) == "table" then
+            if result[1] and result[1].name then
+              flatten_to_acc(result)
+            elseif result[1] and result[1].result then
+              for _, r in pairs(result) do if r.result then flatten_to_acc(r.result) end end
+            end
+          end
+          if pending <= 0 then
+            callback(accumulated)
+          end
+        end, buf)
+      end
+      return nil, function() end
     end,
     action = opts.action or actions.edit,
     preview = opts.preview ~= nil and opts.preview or true,
@@ -159,8 +146,13 @@ function M.lsp_workspace_symbols(opts)
     show_on_open = opts.show_on_open or false,
     incremental = false,
     provider = function(query, ctx, callback)
+      if type(callback) ~= "function" then return nil end
       if query == "" then
-        return {}
+        vim.schedule(function()
+          if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+          callback({})
+        end)
+        return nil, function() end
       end
       local lsp = get_lsp()
       local buf = (ctx and ctx.buf and vim.api.nvim_buf_is_valid(ctx.buf)) and ctx.buf or 0
@@ -169,7 +161,11 @@ function M.lsp_workspace_symbols(opts)
         clients = lsp.get_clients()
       end
       if #clients == 0 then
-        return { { label = "No LSP client attached", filter_text = "", kind = "Info", detail = "No workspace client" } }
+        vim.schedule(function()
+          if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+          callback({ { label = "No LSP client attached", filter_text = "", kind = "Info", detail = "No workspace client" } })
+        end)
+        return nil, function() end
       end
 
       local pending = #clients
@@ -184,12 +180,12 @@ function M.lsp_workspace_symbols(opts)
               table.insert(accumulated, utils.lsp_symbol_to_item(sym, { default_path = ctx and ctx.file }))
             end
           end
-          if pending <= 0 and callback then
+          if pending <= 0 then
             callback(accumulated)
           end
         end, buf)
       end
-      return nil -- asynchronous
+      return nil, function() end
     end,
     action = opts.action or actions.edit,
     preview = opts.preview ~= nil and opts.preview or true,
@@ -205,7 +201,8 @@ function M.diagnostics(opts)
     prefix = opts.prefix ~= nil and opts.prefix or "!",
     keymap = opts.keymap ~= nil and opts.keymap or "<leader>sd",
     show_on_open = opts.show_on_open ~= nil and opts.show_on_open or true,
-    provider = function(query, ctx)
+    provider = function(query, ctx, callback)
+      if type(callback) ~= "function" then return nil end
       local diags
       if opts.workspace then
         diags = vim.diagnostic.get()
@@ -223,9 +220,13 @@ function M.diagnostics(opts)
         end
       end
       if #items == 0 and (query == nil or query == "") then
-        return { { label = "No diagnostics", filter_text = "", kind = "Info", detail = "No diagnostics" } }
+        items = { { label = "No diagnostics", filter_text = "", kind = "Info", detail = "No diagnostics" } }
       end
-      return items
+      vim.schedule(function()
+        if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+        callback(items)
+      end)
+      return nil, function() end
     end,
     action = opts.action or actions.edit,
     preview = opts.preview ~= nil and opts.preview or true,
@@ -242,10 +243,15 @@ function M.lines(opts)
     keymap = opts.keymap ~= nil and opts.keymap or "<leader>sl",
     show_on_open = opts.show_on_open ~= nil and opts.show_on_open or true,
     ---@diagnostic disable-next-line: unused-local
-    provider = function(_query, ctx)
+    provider = function(_query, ctx, callback)
+      if type(callback) ~= "function" then return nil end
       local buf = (ctx and ctx.buf and vim.api.nvim_buf_is_valid(ctx.buf)) and ctx.buf or vim.api.nvim_get_current_buf()
       if not vim.api.nvim_buf_is_valid(buf) then
-        return {}
+        vim.schedule(function()
+          if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+          callback({})
+        end)
+        return nil, function() end
       end
       local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
       local items = {}
@@ -262,7 +268,11 @@ function M.lines(opts)
           })
         end
       end
-      return items
+      vim.schedule(function()
+        if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+        callback(items)
+      end)
+      return nil, function() end
     end,
     action = opts.action or actions.set_cursor,
     preview = opts.preview ~= nil and opts.preview or true,
