@@ -697,9 +697,13 @@ function M.open(mode_name, opts)
     enter = true,
     focusable = true,
     zindex = 50,
+    transparent = win_cfg.transparent,
+    winhighlight = win_cfg.winhighlight,
     win_options = {
       winblend = win_cfg.winblend or 0,
       cursorline = false,
+      transparent = win_cfg.transparent,
+      winhighlight = win_cfg.winhighlight,
     },
   })
 
@@ -1069,7 +1073,9 @@ function M.pick(items, opts, on_choice)
     size = { width = geo.width, height = geo.height },
     border = win_cfg.border or "rounded",
     enter = true, focusable = true, zindex = 50,
-    win_options = { winblend = win_cfg.winblend or 0, cursorline = false },
+    transparent = win_cfg.transparent,
+    winhighlight = win_cfg.winhighlight,
+    win_options = { winblend = win_cfg.winblend or 0, cursorline = false, transparent = win_cfg.transparent, winhighlight = win_cfg.winhighlight },
   })
   M._popup:mount()
   pcall(function()

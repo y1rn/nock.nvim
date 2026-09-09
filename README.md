@@ -328,6 +328,8 @@ require("nock").setup({
   window = {
     border  = "rounded",               -- "rounded" | "single" | "double" | "none"
     winblend = 0,
+    transparent = true,                -- NormalFloat/FloatBorder -> Normal (bg transparent); false = opaque float
+    winhighlight = nil,                -- override winhighlight string when set
     padding = { left = 1, right = 1 }, -- reserved, rendered via buffer content
   },
   files = {

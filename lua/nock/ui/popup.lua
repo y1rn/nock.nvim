@@ -66,6 +66,16 @@ function Popup:mount()
     local win_opts = self.opts.win_options or {}
     wo.winblend = win_opts.winblend or (self.opts.winblend or 0)
     wo.cursorline = win_opts.cursorline or false
+    local winhl = win_opts.winhighlight or self.opts.winhighlight
+    if winhl == nil then
+      local transparent = win_opts.transparent
+      if transparent == nil then transparent = self.opts.transparent end
+      if transparent == nil then transparent = true end
+      if transparent then
+        winhl = "NormalFloat:Normal,FloatBorder:Normal,FloatTitle:Normal"
+      end
+    end
+    if winhl then wo.winhighlight = winhl end
     wo.wrap = false
     wo.number = false
     wo.relativenumber = false

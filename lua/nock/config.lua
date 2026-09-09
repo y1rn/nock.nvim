@@ -79,6 +79,8 @@ M.defaults = {
   window = {
     border = "rounded",
     winblend = 0,
+    transparent = true,
+    winhighlight = nil,
     padding = { left = 1, right = 1 },
   },
   files = {
