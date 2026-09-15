@@ -87,8 +87,7 @@ function M.lsp_document_symbols(opts)
     prefix = opts.prefix ~= nil and opts.prefix or "@",
     keymap = opts.keymap ~= nil and opts.keymap or "<leader>ss",
     _lsp_target = "document_symbol",
-    ---@diagnostic disable-next-line: unused-local
-    provider = function(_query, ctx, callback)
+    provider = function(query, ctx, callback)
       if type(callback) ~= "function" then return nil end
       local lsp = get_lsp()
       local buf = (ctx and ctx.buf and vim.api.nvim_buf_is_valid(ctx.buf)) and ctx.buf or vim.api.nvim_get_current_buf()
@@ -96,9 +95,14 @@ function M.lsp_document_symbols(opts)
       if #clients == 0 then
         clients = lsp.get_clients()
         if #clients == 0 then
+          -- Empty source, not an Item: notify on empty query, silent {} on typed queries.
+          local empty_query = query == nil or query == ""
           vim.schedule(function()
             if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
-            callback({ { label = "No LSP client attached", filter_text = "", kind = "Info", detail = "No LSP for buffer " .. buf } })
+            if empty_query then
+              vim.notify("No LSP client attached", vim.log.levels.INFO)
+            end
+            callback({})
           end)
           return nil, function() end
         end
@@ -160,10 +164,13 @@ function M.lsp_workspace_symbols(opts)
       if #clients == 0 then
         clients = lsp.get_clients()
       end
+      -- Only reachable with a non-empty query (empty query returns {} above):
+      -- the user asked, but there is no source. Notify and keep the list empty.
       if #clients == 0 then
         vim.schedule(function()
           if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
-          callback({ { label = "No LSP client attached", filter_text = "", kind = "Info", detail = "No workspace client" } })
+          vim.notify("No workspace client", vim.log.levels.INFO)
+          callback({})
         end)
         return nil, function() end
       end
@@ -220,7 +227,14 @@ function M.diagnostics(opts)
         end
       end
       if #items == 0 and (query == nil or query == "") then
-        items = { { label = "No diagnostics", filter_text = "", kind = "Info", detail = "No diagnostics" } }
+        -- Empty source, not an Item: notify and leave the list empty, so
+        -- Enter on the empty list takes the shell._commit empty path (dismiss).
+        vim.schedule(function()
+          if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end
+          vim.notify("No diagnostics", vim.log.levels.INFO)
+          callback({})
+        end)
+        return nil, function() end
       end
       vim.schedule(function()
         if ctx and ctx.is_cancelled and ctx.is_cancelled() then return end

@@ -218,6 +218,140 @@ describe("nock extensibility, actions, utils, and presets (12)", function()
 
     nock.close()
   end)
+  it("diagnostics empty source notifies instead of a committable placeholder Item", function()
+    local b = vim.api.nvim_create_buf(true, false)
+    table.insert(created_bufs, b)
+    vim.api.nvim_buf_set_name(b, vim.fn.getcwd() .. "/diag_empty.lua")
+    vim.api.nvim_set_current_buf(b)
+    local notified = {}
+    local orig_notify = vim.notify
+    vim.notify = function(msg, level, ...)
+      table.insert(notified, { msg = msg, level = level })
+      return nil
+    end
+    local ok, err = pcall(function()
+      nock.setup({ modes = { diag = presets.diagnostics({ prefix = "!" }) } })
+      nock.open("diag")
+      assert.is_true(shell.is_open())
+      vim.wait(2000, function() return #notified > 0 end)
+      assert.are.equal(1, #notified)
+      assert.are.equal("No diagnostics", notified[1].msg)
+      assert.are.equal(vim.log.levels.INFO, notified[1].level)
+      assert.are.equal(0, #shell._get_filtered())
+      assert.are.equal(0, shell._get_selected_idx())
+      local names_before = {}
+      for _, existing in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(existing) then
+          names_before[vim.api.nvim_buf_get_name(existing)] = true
+        end
+      end
+      shell._commit()
+      assert.is_false(shell.is_open())
+      for _, existing in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(existing) then
+          local name = vim.api.nvim_buf_get_name(existing)
+          assert.is_nil(name:find("No diagnostics", 1, true))
+          if name ~= "" and not names_before[name] then
+            assert.is_true(name:find("diag_empty", 1, true) ~= nil, "unexpected new buffer: " .. name)
+          end
+        end
+      end
+    end)
+    vim.notify = orig_notify
+    pcall(nock.close)
+    if not ok then error(err) end
+  end)
+
+  it("diagnostics typed query with no matches stays silent with an empty list", function()
+    local b = vim.api.nvim_create_buf(true, false)
+    table.insert(created_bufs, b)
+    vim.api.nvim_buf_set_name(b, vim.fn.getcwd() .. "/diag_typed.lua")
+    vim.api.nvim_set_current_buf(b)
+    local notified = {}
+    local orig_notify = vim.notify
+    vim.notify = function(msg, level, ...)
+      table.insert(notified, { msg = msg, level = level })
+      return nil
+    end
+    local ok, err = pcall(function()
+      nock.setup({ modes = { diag = presets.diagnostics({ prefix = "!" }) } })
+      nock.open("diag")
+      assert.is_true(shell.is_open())
+      vim.wait(2000, function() return #notified > 0 end)
+      assert.are.equal("No diagnostics", notified[1].msg)
+      notified = {}
+      shell._set_query_for_test("!zzz_no_match")
+      vim.wait(500, function() return #notified > 0 end)
+      assert.are.equal(0, #notified)
+      assert.are.equal(0, #shell._get_filtered())
+    end)
+    vim.notify = orig_notify
+    pcall(nock.close)
+    if not ok then error(err) end
+  end)
+
+  it("lsp_document_symbols with no client notifies instead of a placeholder Item", function()
+    presets._set_lsp({
+      get_clients = function() return {} end,
+      make_text_document_params = function() return {} end,
+      client_request = function() end,
+      buf_request_sync = function() return {} end,
+    })
+    local notified = {}
+    local orig_notify = vim.notify
+    vim.notify = function(msg, level, ...)
+      table.insert(notified, { msg = msg, level = level })
+      return nil
+    end
+    local ok, err = pcall(function()
+      nock.setup({ modes = { doc = presets.lsp_document_symbols({ prefix = "@" }) } })
+      nock.open("doc")
+      assert.is_true(shell.is_open())
+      vim.wait(2000, function() return #notified > 0 end)
+      assert.are.equal("No LSP client attached", notified[1].msg)
+      assert.are.equal(vim.log.levels.INFO, notified[1].level)
+      assert.are.equal(0, #shell._get_filtered())
+      shell._commit()
+      assert.is_false(shell.is_open())
+    end)
+    vim.notify = orig_notify
+    presets._reset_lsp()
+    pcall(nock.close)
+    if not ok then error(err) end
+  end)
+
+  it("lsp_workspace_symbols empty query silent, typed query with no client notifies", function()
+    presets._set_lsp({
+      get_clients = function() return {} end,
+      make_text_document_params = function() return {} end,
+      client_request = function() end,
+      buf_request_sync = function() return {} end,
+    })
+    local notified = {}
+    local orig_notify = vim.notify
+    vim.notify = function(msg, level, ...)
+      table.insert(notified, { msg = msg, level = level })
+      return nil
+    end
+    local ok, err = pcall(function()
+      nock.setup({ modes = { ws = presets.lsp_workspace_symbols({ prefix = "#" }) } })
+      nock.open("ws")
+      assert.is_true(shell.is_open())
+      vim.wait(300, function() return #notified > 0 end)
+      assert.are.equal(0, #notified)
+      assert.are.equal(0, #shell._get_filtered())
+      shell._set_query_for_test("#foo")
+      vim.wait(2000, function() return #notified > 0 end)
+      assert.are.equal("No workspace client", notified[1].msg)
+      assert.are.equal(vim.log.levels.INFO, notified[1].level)
+      assert.are.equal(0, #shell._get_filtered())
+    end)
+    vim.notify = orig_notify
+    presets._reset_lsp()
+    pcall(nock.close)
+    if not ok then error(err) end
+  end)
+
 
   it("nock.presets.lines indexes buffer lines and jumps cursor on commit", function()
     local b = vim.api.nvim_create_buf(true, false)
