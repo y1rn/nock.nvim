@@ -40,7 +40,6 @@ function M.restore(state)
   M.clear(state)
 end
 
-
 local function should_preview(item, mode)
   if not item or not item.location or not item.location.path then
     return false
@@ -118,9 +117,9 @@ function M.do_preview(state, item, mode)
   local end_col = item.location.end_col
   if end_lnum and end_col and end_lnum >= lnum then
     -- highlight the symbol's exact range (selectionRange)
-    pcall(vim.api.nvim_buf_set_extmark, buf, origin.preview_ns, lnum - 1, col, {
+    pcall(vim.api.nvim_buf_set_extmark, buf, origin.preview_ns, lnum - 1, col - 1, {
       end_row = end_lnum - 1,
-      end_col = end_col,
+      end_col = end_col - 1,
       hl_group = "NockPreview",
     })
   else

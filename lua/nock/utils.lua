@@ -57,9 +57,9 @@ function M.lsp_symbol_to_item(sym, opts)
   local ok_cfg, cfg = pcall(require, "nock.config")
   if ok_cfg and cfg.options and cfg.options.icons and cfg.options.icons.enabled then
     local sym_icons = cfg.options.icons.symbols or {}
-    icon = sym_icons[kind_name] or sym_icons[sym.kind] or (type(sym.kind)=="number" and sym_icons[tostring(sym.kind)]) or nil
+    icon = sym_icons[kind_name] or sym_icons[sym.kind] or (type(sym.kind) == "number" and sym_icons[tostring(sym.kind)]) or
+        nil
   end
-
   local path = opts.default_path or ""
   local lnum = 1
   local col = 0
@@ -78,9 +78,9 @@ function M.lsp_symbol_to_item(sym, opts)
       if opts.bufnr and vim.api.nvim_buf_is_valid(opts.bufnr) then
         local line = vim.api.nvim_buf_get_lines(opts.bufnr, lnum - 1, lnum, false)[1] or ""
         local ok, bcol = pcall(vim.str_byteindex, line, character, false)
-        col = ok and bcol or character
+        col = (ok and bcol or character) + 1
       else
-        col = character
+        col = character + 1
       end
       if loc.range["end"] then
         end_lnum = (loc.range["end"].line or 0) + 1
@@ -88,13 +88,13 @@ function M.lsp_symbol_to_item(sym, opts)
         if opts.bufnr and vim.api.nvim_buf_is_valid(opts.bufnr) then
           local eline = vim.api.nvim_buf_get_lines(opts.bufnr, end_lnum - 1, end_lnum, false)[1] or ""
           local ok2, ecol = pcall(vim.str_byteindex, eline, ec, false)
-          end_col = ok2 and ecol or ec
+          end_col = (ok2 and ecol or ec) + 1
         else
-          end_col = ec
+          end_col = ec + 1
         end
       end
     end
-  -- DocumentSymbol has sym.range or sym.selectionRange
+    -- DocumentSymbol has sym.range or sym.selectionRange
   elseif sym.selectionRange or sym.range then
     local rng = sym.selectionRange or sym.range
     if rng and rng.start then
@@ -103,9 +103,9 @@ function M.lsp_symbol_to_item(sym, opts)
       if opts.bufnr and vim.api.nvim_buf_is_valid(opts.bufnr) then
         local line = vim.api.nvim_buf_get_lines(opts.bufnr, lnum - 1, lnum, false)[1] or ""
         local ok, bcol = pcall(vim.str_byteindex, line, character, false)
-        col = ok and bcol or character
+        col = (ok and bcol or character) + 1
       else
-        col = character
+        col = character + 1
       end
       if rng["end"] then
         end_lnum = (rng["end"].line or 0) + 1
@@ -113,9 +113,9 @@ function M.lsp_symbol_to_item(sym, opts)
         if opts.bufnr and vim.api.nvim_buf_is_valid(opts.bufnr) then
           local eline = vim.api.nvim_buf_get_lines(opts.bufnr, end_lnum - 1, end_lnum, false)[1] or ""
           local ok2, ecol = pcall(vim.str_byteindex, eline, ec, false)
-          end_col = ok2 and ecol or ec
+          end_col = (ok2 and ecol or ec) + 1
         else
-          end_col = ec
+          end_col = ec + 1
         end
       end
     end
@@ -191,10 +191,10 @@ function M.lsp_location_to_item(loc, opts)
   local lnum, col, end_lnum, end_col = 1, 0, nil, nil
   if range and range.start then
     lnum = (range.start.line or 0) + 1
-    col = char_to_byte(opts.bufnr, opts.win, lnum, range.start.character or 0)
+    col = char_to_byte(opts.bufnr, opts.win, lnum, range.start.character or 0) + 1
     if range["end"] then
       end_lnum = (range["end"].line or 0) + 1
-      end_col = char_to_byte(opts.bufnr, opts.win, end_lnum, range["end"].character or 0)
+      end_col = char_to_byte(opts.bufnr, opts.win, end_lnum, range["end"].character or 0) + 1
     end
   end
 
@@ -298,15 +298,15 @@ function M.format_diagnostic(diag, opts)
   local kind = SEVERITY_NAMES[sev] or "Diagnostic"
   local msg = (diag.message or ""):gsub("\n", " ")
   local lnum = (diag.lnum or 0) + 1
-  local col = diag.col or 0
+  local col = (diag.col or 0) + 1
   local end_lnum = diag.end_lnum ~= nil and (diag.end_lnum + 1) or nil
-  local end_col = diag.end_col
+  local end_col = diag.end_col + 1
   -- Icon for diagnostics
   local icon = nil
   local ok_cfg, cfg = pcall(require, "nock.config")
   if ok_cfg and cfg.options and cfg.options.icons and cfg.options.icons.enabled then
     local diag_icons = cfg.options.icons.diagnostics or {}
-    icon = diag_icons[kind] or diag_icons[sev] or (type(sev)=="number" and diag_icons[tostring(sev)]) or nil
+    icon = diag_icons[kind] or diag_icons[sev] or (type(sev) == "number" and diag_icons[tostring(sev)]) or nil
   end
 
   local path = opts.default_path or ""
